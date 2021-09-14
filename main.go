@@ -1,22 +1,34 @@
 package main
 
 import (
-	"archive/zip"
+	_ "embed"
 	"flag"
-	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 )
 
 var (
-	CWD, _      = os.Getwd()
-	source      string
+
+	//
+	//	Embed the file containing our custom proxy code.
+	//
+	//go:embed proxy.go.tmpl
+	proxy string
+
+	//	Get the current working directory
+	CWD, _ = os.Getwd()
+
+	//	Golang function file to be built
+	source string
+
+	//	Destination zip file to be deployed on Lambda
 	destination string
+
+	//	Execution specific temporary directory to conveniently build our function
+	tempDir string
 )
 
 func init() {
@@ -30,248 +42,134 @@ func main() {
 	if source != "" && destination != "" {
 		if err := buildAndZip(source, destination); err != nil {
 			log.Fatal(err)
+		} else {
+			log.Println("Produced package:", destination)
 		}
-		log.Println("Produced package:", destination)
+
+		//	Delete the temporary directory
+		cleanup(tempDir)
+
 	} else {
-		log.Fatal("Properly use: golambda --source [file_name] --destination [file_name.zip]")
+		log.Fatal("Proper use: golambda --source [file_name.go] --destination [file_name.zip]")
 	}
 }
 
 func buildAndZip(file, dest string) error {
 
-	// create a temporary directory
-	tempDir, err := ioutil.TempDir("", fileNameWithoutExtension(file))
+	//
+	//	Create a temporary directory to store our built plugin in
+	//
+
+	var err error
+	tempDir, err = ioutil.TempDir("", fileNameWithoutExtension(file))
 	if err != nil {
-		log.Println(err)
 		return err
 	}
 
-	// copy the source code file
+	//
+	//	Copy the source code file to our temporary directory
+	//
+
 	if _, err := copy(file, filepath.Join(tempDir, file)); err != nil {
-		cleanup(tempDir)
 		log.Println("Failed to copy source code file")
 		return err
 	}
 
+	//
+	//	Create the main file which will have our proxy code
+	//
+
 	f, err := os.Create(filepath.Join(tempDir, "main.go"))
 	if err != nil {
-		cleanup(tempDir)
 		log.Println("Failed to create boilerplate file")
 		return err
 	}
 
 	defer f.Close()
 
-	f.WriteString(getBoilerplate())
+	f.WriteString(proxy)
 	f.Sync()
+
+	//
+	//	Fetch the Golang utility installation path
+	//
 
 	CLI, err := exec.LookPath("go")
 	if err != nil {
-		cleanup(tempDir)
 		log.Println("Failed to get GOPATH")
 		return err
 	}
 
-	// run go mod init
+	//
+	//	Initialize the function package
+	//
+
 	execute := exec.Cmd{
-		Path: CLI,
-		Args: []string{CLI, "mod", "init", "github.com/nhost.io/" + fileNameWithoutExtension(file)},
-		Dir:  tempDir,
+		Path:   CLI,
+		Args:   []string{CLI, "mod", "init", "github.com/nhost.io/" + fileNameWithoutExtension(file)},
+		Dir:    tempDir,
+		Stderr: os.Stderr,
+		Stdout: os.Stdout,
 	}
 
 	if err := execute.Run(); err != nil {
-		cleanup(tempDir)
 		log.Println("Failed to run go mod init")
 		return err
 	}
 
-	// run go mod tidy
+	//
+	//	Download all the dependencies of our function
+	//
+
 	execute = exec.Cmd{
-		Path: CLI,
-		Args: []string{CLI, "mod", "tidy"},
-		Dir:  tempDir,
+		Path:   CLI,
+		Args:   []string{CLI, "mod", "tidy"},
+		Dir:    tempDir,
+		Stderr: os.Stderr,
+		Stdout: os.Stdout,
 	}
 
 	if err := execute.Run(); err != nil {
-		cleanup(tempDir)
 		log.Println("Failed to run go mod tidy")
 		return err
 	}
 
-	// build the binary
+	//
+	//	Build the function binary
+	//
+
 	execute = exec.Cmd{
-		Env:  []string{"GOOS=linux", "GOARCH=amd64"},
-		Path: CLI,
-		Args: []string{CLI, "build", "-o", filepath.Join(CWD, "main")},
-		Dir:  tempDir,
+		Env:    []string{"GOOS=linux", "GOARCH=amd64"},
+		Path:   CLI,
+		Args:   []string{CLI, "build", "-o", filepath.Join(CWD, "main")},
+		Dir:    tempDir,
+		Stderr: os.Stderr,
+		Stdout: os.Stdout,
 	}
 	execute.Env = append(execute.Env, os.Environ()...)
 
 	if err := execute.Run(); err != nil {
-		cleanup(tempDir)
 		log.Println("Failed to build binary")
 		return err
 	}
 
-	// zip the file
+	//
+	//	Compress/zip the output file
+	//
+
 	if err := zipIt("main", dest); err != nil {
-		cleanup(tempDir)
 		log.Println("Failed to zip it")
 		return err
 	}
 
-	// remove the binary
+	//
+	//	Delete the binary once our job is complete
+	//
+
 	if err := os.Remove("main"); err != nil {
-		cleanup(tempDir)
 		log.Println("Failed to remove binary")
 		return err
 	}
 
 	return nil
-}
-
-func zipIt(source, location string) error {
-
-	fileToZip, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer fileToZip.Close()
-
-	// Get the file information
-	info, err := fileToZip.Stat()
-	if err != nil {
-		return err
-	}
-
-	header, err := zip.FileInfoHeader(info)
-	if err != nil {
-		return err
-	}
-
-	// Using FileInfoHeader() above only uses the basename of the file. If we want
-	// to preserve the folder structure we can overwrite this with the full path.
-	header.Name = source
-
-	// Change to deflate to gain better compression
-	// see http://golang.org/pkg/archive/zip/#pkg-constants
-	header.Method = zip.Deflate
-
-	newZipFile, err := os.Create(location)
-	if err != nil {
-		return err
-	}
-	defer newZipFile.Close()
-
-	zipWriter := zip.NewWriter(newZipFile)
-	defer zipWriter.Close()
-
-	writer, err := zipWriter.CreateHeader(header)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(writer, fileToZip)
-	return err
-}
-
-func copy(src, dst string) (int64, error) {
-	sourceFileStat, err := os.Stat(src)
-	if err != nil {
-		return 0, err
-	}
-
-	if !sourceFileStat.Mode().IsRegular() {
-		return 0, fmt.Errorf("%s is not a regular file", src)
-	}
-
-	source, err := os.Open(src)
-	if err != nil {
-		return 0, err
-	}
-	defer source.Close()
-
-	destination, err := os.Create(dst)
-	if err != nil {
-		return 0, err
-	}
-	defer destination.Close()
-	nBytes, err := io.Copy(destination, source)
-	return nBytes, err
-}
-
-func cleanup(path string) {
-	if err := os.Remove(path); err != nil {
-		log.Println("Failed to remove: ", path)
-	}
-}
-
-func fileNameWithoutExtension(fileName string) string {
-	return strings.TrimSuffix(fileName, filepath.Ext(fileName))
-}
-
-func getBoilerplate() string {
-	return `
-package main
-
-import (
-	"bytes"
-	"context"
-	"io/ioutil"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-
-	"github.com/aws/aws-lambda-go/events"
-	"github.com/aws/aws-lambda-go/lambda"
-)
-
-func main() {
-	server := route(Handler)
-	lambda.Start(server)
-}
-
-// route wraps echo server into Lambda Handler
-func route(handler func(http.ResponseWriter, *http.Request)) func(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
-	return func(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
-		buf, _ := ioutil.ReadAll(request.Body)
-		body := bytes.NewBuffer(buf)
-		req, _ := http.NewRequest(request.HTTPMethod, request.Path, body)
-		for k, v := range request.Headers {
-			req.Header.Add(k, v)
-		}
-
-		q := request.URL.Query()
-		req.URL.RawQuery = q.Encode()
-
-		rec := httptest.NewRecorder()
-		handler(rec, req)
-
-		res := rec.Result()
-		responseHeaders := make(map[string]string)
-		for key, value := range res.Header {
-			responseHeaders[key] = ""
-			if len(value) > 0 {
-				responseHeaders[key] = value[0]
-			}
-		}
-
-		responseBody, err := ioutil.ReadAll(res.Body)
-		if err != nil {
-			return events.APIGatewayProxyResponse{
-				Body:       err.Error(),
-				Headers:    responseHeaders,
-				StatusCode: http.StatusInternalServerError,
-			}, err
-		}
-
-		responseHeaders["Access-Control-Allow-Origin"] = "*"
-		responseHeaders["Access-Control-Allow-Headers"] = "origin,Accept,Authorization,Content-Type"
-
-		return events.APIGatewayProxyResponse{
-			Body:       string(responseBody),
-			Headers:    responseHeaders,
-			StatusCode: res.StatusCode,
-		}, nil
-	}
-}`
 }
