@@ -1,6 +1,6 @@
 # Example
 
-Golang function in file `date.go`. And it's output zip file in `func.zip`.
+Golang function in file `hello.go`. And it's output zip file in `outpu.zip`.
 
 ## Requirements
 
