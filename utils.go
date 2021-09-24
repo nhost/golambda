@@ -36,7 +36,7 @@ func copy(src, dst string) (int64, error) {
 }
 
 func cleanup(path string) {
-	if err := os.Remove(path); err != nil {
+	if err := os.RemoveAll(path); err != nil {
 		log.Println("Failed to remove: ", path)
 	}
 }
