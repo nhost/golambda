@@ -63,6 +63,8 @@ func route(handler func(http.ResponseWriter, *http.Request)) func(ctx context.Co
 			}, err
 		}
 
+		defer res.Body.Close()
+
 		responseHeaders["Access-Control-Allow-Origin"] = "*"
 		responseHeaders["Access-Control-Allow-Headers"] = "origin,Accept,Authorization,Content-Type"
 

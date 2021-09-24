@@ -34,6 +34,8 @@ type Body struct {
 //	Expected Output: `Nhost pays it's respects to Wahal, Mrinal!`
 
 func Handler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
 	body, _ := ioutil.ReadAll(r.Body)
 	var payload Body
 	json.Unmarshal(body, &payload)
