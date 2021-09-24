@@ -16,6 +16,6 @@ Or download using go: `go get github.com/nhost/golambda`
 
 ## Usage
 
-`golambda --source {golang_function_file}.go --output {output_zip_file}.zip`
+`golambda -source {golang_function_file}.go -output {output_zip_file}.zip`
 
 The output file can directly be deployed on AWS Lambda.
