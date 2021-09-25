@@ -1,7 +1,7 @@
-//	
+//
 //	This is the template that will wrap your original
 //	Golang function into a lambda compatible one.
-//	
+//
 
 package main
 
@@ -34,7 +34,7 @@ func route(handler func(http.ResponseWriter, *http.Request)) func(ctx context.Co
 			req.Header.Add(k, v)
 		}
 
-		var q url.Values
+		q := make(url.Values)
 		for key, value := range request.QueryStringParameters {
 			q.Add(key, value)
 		}
@@ -62,6 +62,8 @@ func route(handler func(http.ResponseWriter, *http.Request)) func(ctx context.Co
 				StatusCode: http.StatusInternalServerError,
 			}, err
 		}
+
+		defer res.Body.Close()
 
 		responseHeaders["Access-Control-Allow-Origin"] = "*"
 		responseHeaders["Access-Control-Allow-Headers"] = "origin,Accept,Authorization,Content-Type"
