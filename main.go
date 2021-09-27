@@ -31,6 +31,11 @@ var (
 	tempDir string
 )
 
+const (
+	goMod = "go.mod"
+	goSum = "go.sum"
+)
+
 func init() {
 	flag.StringVar(&source, "source", "", "File to zip")
 	flag.StringVar(&destination, "output", "", "Output Zip file name")
@@ -76,6 +81,20 @@ func buildAndZip(file, dest string) error {
 	}
 
 	//
+	//	Copy go.mod and go.sum if they exist
+	//
+
+	gomodFiles := []string{goMod, goSum}
+	for _, filename := range gomodFiles {
+		if fileExists(filename) {
+			if _, err := copy(filename, filepath.Join(tempDir, filename)); err != nil {
+				log.Printf("Failed to copy %s file\n", filename)
+				return err
+			}
+		}
+	}
+
+	//
 	//	Create the main file which will have our proxy code
 	//
 
@@ -100,28 +119,30 @@ func buildAndZip(file, dest string) error {
 		return err
 	}
 
-	//
-	//	Initialize the function package
-	//
+	if !fileExists(filepath.Join(tempDir, goMod)) {
+		//
+		//	Initialize the function package
+		//
 
-	execute := exec.Cmd{
-		Path:   CLI,
-		Args:   []string{CLI, "mod", "init", "github.com/nhost.io/" + fileNameWithoutExtension(file)},
-		Dir:    tempDir,
-		Stderr: os.Stderr,
-		Stdout: os.Stdout,
-	}
+		execute := exec.Cmd{
+			Path:   CLI,
+			Args:   []string{CLI, "mod", "init", "github.com/nhost.io/" + fileNameWithoutExtension(file)},
+			Dir:    tempDir,
+			Stderr: os.Stderr,
+			Stdout: os.Stdout,
+		}
 
-	if err := execute.Run(); err != nil {
-		log.Println("Failed to run go mod init")
-		return err
+		if err := execute.Run(); err != nil {
+			log.Println("Failed to run go mod init")
+			return err
+		}
 	}
 
 	//
 	//	Download all the dependencies of our function
 	//
 
-	execute = exec.Cmd{
+	execute := exec.Cmd{
 		Path:   CLI,
 		Args:   []string{CLI, "mod", "tidy"},
 		Dir:    tempDir,
