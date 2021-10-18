@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"github.com/davecgh/go-spew/spew"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -28,6 +29,8 @@ func main() {
 
 func route(handler func(http.ResponseWriter, *http.Request)) func(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	return func(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+		spew.Dump(request)
+
 		body := bytes.NewBufferString(request.Body)
 		req, _ := http.NewRequest(request.HTTPMethod, request.Path, body)
 		for k, v := range request.Headers {
